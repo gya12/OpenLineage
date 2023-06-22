@@ -3,6 +3,7 @@
 
 import copy
 import logging
+import os
 import threading
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Callable, Optional
@@ -17,14 +18,19 @@ from openlineage.airflow.utils import (
     get_job_name,
     get_task_location,
 )
+from pkg_resources import parse_version
 
 from airflow.listeners import hookimpl
+from airflow.version import version as AIRFLOW_VERSION
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from airflow.models import BaseOperator, DagRun, TaskInstance
 
+
+direct_execution = parse_version(AIRFLOW_VERSION) >= parse_version("2.6.0") \
+    or bool(os.getenv("OPENLINEAGE_AIRFLOW_ENABLE_DIRECT_EXECUTION"))
 
 
 class TaskHolder:
@@ -74,6 +80,13 @@ extractor_manager = ExtractorManager()
 adapter = OpenLineageAdapter()
 
 
+def execute(_callable):
+    if direct_execution:
+        _callable()
+    else:
+        execute_in_thread(_callable)
+
+
 @hookimpl
 def on_task_instance_running(previous_state, task_instance: "TaskInstance", session: "Session"):
     if not hasattr(task_instance, 'task'):
@@ -83,22 +96,26 @@ def on_task_instance_running(previous_state, task_instance: "TaskInstance", sess
 
     log.debug("OpenLineage listener got notification about task instance start")
     dagrun = task_instance.dag_run
-    dag = task_instance.task.dag
+    task = task_instance.task
+    dag = task.dag
 
     def on_running():
-        task_instance_copy = copy.deepcopy(task_instance)
-        task_instance_copy.render_templates()
-        task = task_instance_copy.task
+        nonlocal task_instance
+        ti = task_instance
+        if not direct_execution:
+            ti = copy.deepcopy(task_instance)
+            ti.render_templates()
+            task = ti.task
 
-        task_holder.set_task(task_instance_copy)
+        task_holder.set_task(ti)
         # that's a workaround to detect task running from deferred state
         # we return here because Airflow 2.3 needs task from deferred state
-        if task_instance.next_method is not None:
+        if ti.next_method is not None:
             return
         parent_run_id = adapter.build_dag_run_id(dag.dag_id, dagrun.run_id)
 
         task_uuid = OpenLineageAdapter.build_task_instance_run_id(
-            task.task_id, task_instance.execution_date, task_instance.try_number
+            task.task_id, ti.execution_date, ti.try_number
         )
 
         task_metadata = extractor_manager.extract_metadata(
@@ -111,7 +128,7 @@ def on_task_instance_running(previous_state, task_instance: "TaskInstance", sess
             run_id=task_uuid,
             job_name=get_job_name(task),
             job_description=dag.description,
-            event_time=DagUtils.get_start_time(task_instance_copy.start_date),
+            event_time=DagUtils.get_start_time(ti.start_date),
             parent_job_name=dag.dag_id,
             parent_run_id=parent_run_id,
             code_location=get_task_location(task),
@@ -122,13 +139,13 @@ def on_task_instance_running(previous_state, task_instance: "TaskInstance", sess
             run_facets={
                 **task_metadata.run_facets,
                 **get_custom_facets(
-                    dagrun, task, dagrun.external_trigger, task_instance_copy
+                    dagrun, task, dagrun.external_trigger, ti
                 ),
-                **get_airflow_run_facet(dagrun, dag, task_instance_copy, task, task_uuid)
+                **get_airflow_run_facet(dagrun, dag, ti, task, task_uuid)
             }
         )
 
-    execute_in_thread(on_running)
+    execute(on_running)
 
 
 @hookimpl
@@ -153,7 +170,7 @@ def on_task_instance_success(previous_state, task_instance: "TaskInstance", sess
             task=task_metadata,
         )
 
-    execute_in_thread(on_success)
+    execute(on_success)
 
 
 @hookimpl
@@ -179,7 +196,7 @@ def on_task_instance_failed(previous_state, task_instance: "TaskInstance", sessi
             task=task_metadata,
         )
 
-    execute_in_thread(on_failure)
+    execute(on_failure)
 
 
 @hookimpl
