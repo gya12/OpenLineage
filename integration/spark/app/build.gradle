@@ -184,10 +184,22 @@ def commonTestConfiguration = {
     classpath = project.sourceSets.test.runtimeClasspath
 }
 
+task nonParallelTest (type: Test) {
+    group = 'verification'
+    description = "Runs tests that cannot be run in parallel. For example test suites that require metastore_db"
+
+    maxParallelForks = 1
+
+    useJUnitPlatform {
+        includeTags("nonParallelTest")
+    }
+}
+
 // wrócić do jednego test z jakąś metodą zwracającą konfigurację żeby spark3 działał
 test {
+    dependsOn nonParallelTest
     useJUnitPlatform {i ->
-        excludeTags ('integration-test')
+        excludeTags ('integration-test', 'nonParallelTest')
         if(versions.delta == "NA") {excludeTags 'delta'}
         if(versions.iceberg == "NA") {excludeTags 'iceberg'}
     }

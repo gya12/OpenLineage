@@ -21,9 +21,9 @@ import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationOutputData
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2ScanRelationInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.InMemoryRelationInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.LogicalRelationDatasetBuilder;
-import io.openlineage.spark3.agent.lifecycle.plan.MapPartitionsDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.MergeIntoCommandInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.MergeIntoCommandOutputDatasetBuilder;
+import io.openlineage.spark3.agent.lifecycle.plan.MergeIntoOutputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.TableContentChangeDatasetBuilder;
 import java.util.Collection;
 import java.util.List;
@@ -60,7 +60,7 @@ public class Spark3DatasetBuilderFactory implements DatasetBuilderFactory {
         .add(new AppendDataDatasetBuilder(context, datasetFactory))
         .add(new DataSourceV2RelationOutputDatasetBuilder(context, datasetFactory))
         .add(new TableContentChangeDatasetBuilder(context))
-        .add(new MapPartitionsDatasetBuilder(context))
+        .add(new MergeIntoOutputDatasetBuilder(context))
         .add(new MergeIntoCommandOutputDatasetBuilder(context))
         .add(new CreateReplaceDatasetBuilder(context))
         .add(new AlterTableDatasetBuilder(context))

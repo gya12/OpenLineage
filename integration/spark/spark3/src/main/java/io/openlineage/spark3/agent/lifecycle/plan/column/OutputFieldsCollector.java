@@ -6,6 +6,7 @@
 package io.openlineage.spark3.agent.lifecycle.plan.column;
 
 import io.openlineage.spark.agent.util.ScalaConversionUtils;
+import io.openlineage.spark3.agent.lifecycle.plan.MergeIntoOutputDatasetBuilder;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.catalyst.expressions.Attribute;
@@ -21,6 +22,12 @@ class OutputFieldsCollector {
     getOutputExpressionsFromRoot(plan).stream()
         .forEach(expr -> builder.addOutput(expr.exprId(), expr.name()));
     CustomCollectorsUtils.collectOutputs(plan, builder);
+
+    MergeIntoOutputDatasetBuilder.getMergeIntoOutputRelation(plan)
+        .ifPresent(
+            relation ->
+                getOutputExpressionsFromRoot(relation).stream()
+                    .forEach(expr -> builder.addOutput(expr.exprId(), expr.name())));
 
     if (!builder.hasOutputs()) {
       // extract outputs from the children
