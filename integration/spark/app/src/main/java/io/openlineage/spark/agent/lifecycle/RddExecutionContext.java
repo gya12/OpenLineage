@@ -57,6 +57,7 @@ import org.apache.spark.scheduler.SparkListenerJobEnd;
 import org.apache.spark.scheduler.SparkListenerJobStart;
 import org.apache.spark.scheduler.SparkListenerStageCompleted;
 import org.apache.spark.scheduler.SparkListenerStageSubmitted;
+import org.apache.spark.scheduler.Stage;
 import org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionEnd;
 import org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart;
 import org.apache.spark.util.SerializableJobConf;
@@ -98,6 +99,9 @@ class RddExecutionContext implements ExecutionContext {
   @Override
   @SuppressWarnings("PMD") //  f.setAccessible(true);
   public void setActiveJob(ActiveJob activeJob) {
+    // update activeJob rdd name for multiple jobs case
+    activeJob = updateActiveJobRddName(activeJob);
+
     RDD<?> finalRDD = activeJob.finalStage().rdd();
     this.jobSuffix = nameRDD(finalRDD);
     Set<RDD<?>> rdds = Rdds.flattenRDDs(finalRDD);
@@ -402,5 +406,60 @@ class RddExecutionContext implements ExecutionContext {
       return OpenLineage.RunEvent.EventType.COMPLETE;
     }
     return OpenLineage.RunEvent.EventType.FAIL;
+  }
+
+  private ActiveJob updateActiveJobRddName(ActiveJob activeJob) {
+    Stage finalStage = activeJob.finalStage();
+    RDD<?> rdd = finalStage.rdd();
+    Set<RDD<?>> rdds = Rdds.flattenRDDs(rdd);
+    String rddName = rdd.name();
+
+    List<URI> inputs = findInputs(rdds);
+    Configuration configuration = getConfiguration(activeJob);
+    List<URI> outputs = findOutputs(rdd, configuration);
+
+    String inputsHashcode = Integer.toString(inputs.hashCode());
+    String outputsHashcode = Integer.toString(outputs.hashCode());
+
+    String newRddName = rddName + "_" + inputsHashcode + "_" + outputsHashcode;
+
+    rdd.setName(newRddName);
+
+    return activeJob;
+  }
+
+  private Configuration getConfiguration(ActiveJob activeJob) {
+    RDD<?> finalRDD = activeJob.finalStage().rdd();
+    Configuration jc = new JobConf();
+    if (activeJob.finalStage() instanceof ResultStage) {
+      Function2<TaskContext, Iterator<?>, ?> fn = ((ResultStage) activeJob.finalStage()).func();
+      try {
+        Field f = getConfigField(fn);
+        f.setAccessible(true);
+        Object conf = f.get(fn);
+
+        if (conf instanceof HadoopMapRedWriteConfigUtil) {
+          Field confField = HadoopMapRedWriteConfigUtil.class.getDeclaredField("conf");
+          confField.setAccessible(true);
+          SerializableJobConf serializableJobConf = (SerializableJobConf) confField.get(conf);
+          jc = serializableJobConf.value();
+        } else if (conf instanceof HadoopMapReduceWriteConfigUtil) {
+          Field confField = HadoopMapReduceWriteConfigUtil.class.getDeclaredField("conf");
+          confField.setAccessible(true);
+          SerializableJobConf serializableJobConf = (SerializableJobConf) confField.get(conf);
+          jc = serializableJobConf.value();
+        } else {
+          log.info(
+              "Config field is not HadoopMapRedWriteConfigUtil or HadoopMapReduceWriteConfigUtil, it's {}",
+              conf.getClass().getCanonicalName());
+        }
+      } catch (IllegalAccessException | NoSuchFieldException nfe) {
+        log.warn("Unable to access job conf from RDD", nfe);
+      }
+      log.info("Found job conf from RDD {}", jc);
+    } else {
+      jc = OpenLineageSparkListener.getConfigForRDD(finalRDD);
+    }
+    return jc;
   }
 }
